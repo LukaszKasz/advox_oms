@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { authAPI, tokenManager } from '../api';
 import LanguageSwitcher from './LanguageSwitcher';
@@ -13,6 +13,13 @@ function LoginForm() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
+    const location = useLocation();
+
+    useEffect(() => {
+        if (location.state?.message) {
+            setError('');
+        }
+    }, [location.state]);
 
     const handleChange = (e) => {
         setFormData({
@@ -53,6 +60,11 @@ function LoginForm() {
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-6">
+                    {location.state?.message && (
+                        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
+                            {location.state.message}
+                        </div>
+                    )}
                     {error && (
                         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
                             {error}

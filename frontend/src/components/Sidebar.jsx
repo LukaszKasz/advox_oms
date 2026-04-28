@@ -1,13 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { nexoAPI, tokenManager } from '../api';
+import { authAPI, nexoAPI, tokenManager } from '../api';
 import { GOODS_STORAGE_KEY } from './GoodsPage';
 
 function Sidebar({ collapsed, onToggle }) {
     const { t } = useTranslation();
     const navigate = useNavigate();
     const [goodsLoading, setGoodsLoading] = useState(false);
+    const [isAdmin, setIsAdmin] = useState(false);
+
+    useEffect(() => {
+        const loadUser = async () => {
+            try {
+                const user = await authAPI.getCurrentUser();
+                setIsAdmin(Boolean(user?.is_admin));
+            } catch {
+                setIsAdmin(false);
+            }
+        };
+
+        if (tokenManager.isAuthenticated()) {
+            loadUser();
+        }
+    }, []);
 
     const handleLogout = () => {
         tokenManager.removeToken();
@@ -83,11 +99,25 @@ function Sidebar({ collapsed, onToggle }) {
 
             {/* Top navigation */}
             <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-                <NavLink to="/orders" className={navLinkClass} title={t('sidebar.orders')}>
+                <NavLink to="/orders-to-ship" className={navLinkClass} title={t('sidebar.orders')}>
                     <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                     </svg>
                     {!collapsed && <span className="whitespace-nowrap">{t('sidebar.orders')}</span>}
+                </NavLink>
+
+                <NavLink to="/orders-shipping" className={navLinkClass} title={t('sidebar.ordersShipping')}>
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                    {!collapsed && <span className="whitespace-nowrap">{t('sidebar.ordersShipping')}</span>}
+                </NavLink>
+
+                <NavLink to="/orders-delivered" className={navLinkClass} title={t('sidebar.ordersDelivered')}>
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                    {!collapsed && <span className="whitespace-nowrap">{t('sidebar.ordersDelivered')}</span>}
                 </NavLink>
 
                 <button
@@ -114,6 +144,15 @@ function Sidebar({ collapsed, onToggle }) {
                     </svg>
                     {!collapsed && <span className="whitespace-nowrap">{t('sidebar.settings')}</span>}
                 </NavLink>
+
+                {isAdmin && (
+                    <NavLink to="/users" className={navLinkClass} title={t('sidebar.users')}>
+                        <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5V9H2v11h5m10 0v-2a4 4 0 00-4-4H11a4 4 0 00-4 4v2m10 0H7m8-11a2 2 0 11-4 0 2 2 0 014 0zm-6 0a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        {!collapsed && <span className="whitespace-nowrap">{t('sidebar.users')}</span>}
+                    </NavLink>
+                )}
             </nav>
 
             {/* Bottom - Logout */}

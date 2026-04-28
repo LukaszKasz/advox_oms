@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/backend';
 const NEXO_API_BASE_URL = import.meta.env.VITE_NEXO_API_BASE_URL || 'http://localhost:5085';
 
 // Create axios instance with default config
@@ -62,6 +62,14 @@ export const authAPI = {
         const response = await api.get('/me');
         return response.data;
     },
+    getInvitationInfo: async (token) => {
+        const response = await api.get(`/api/invitations/${token}`);
+        return response.data;
+    },
+    setPasswordFromInvitation: async (token, password) => {
+        const response = await api.post(`/api/invitations/${token}/set-password`, { password });
+        return response.data;
+    },
 };
 
 export const ordersAPI = {
@@ -72,7 +80,11 @@ export const ordersAPI = {
     getOrderDetails: async (orderId) => {
         const response = await api.get(`/api/orders/${orderId}/details`);
         return response.data;
-    }
+    },
+    updateOrderStatus: async (orderId, status) => {
+        const response = await api.put(`/api/orders/${orderId}/status`, { status });
+        return response.data;
+    },
 };
 
 export const integrationSettingsAPI = {
@@ -82,6 +94,17 @@ export const integrationSettingsAPI = {
     },
     updateSettings: async (payload) => {
         const response = await api.put('/api/integrations/settings', payload);
+        return response.data;
+    },
+};
+
+export const adminUsersAPI = {
+    getUsers: async () => {
+        const response = await api.get('/api/admin/users');
+        return response.data;
+    },
+    inviteUser: async (payload) => {
+        const response = await api.post('/api/admin/users/invite', payload);
         return response.data;
     },
 };

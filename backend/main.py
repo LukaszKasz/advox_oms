@@ -1,4 +1,6 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+import os
+import secrets
 from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status
@@ -8,12 +10,13 @@ from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from database import engine, get_db, Base, SessionLocal
-from models import User, IntegrationSettings
+from models import User, IntegrationSettings, OrderStatus
 from auth import (
     verify_password,
     get_password_hash,
     create_access_token,
     get_current_user,
+    get_current_admin_user,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from services.prestashop import (
@@ -50,6 +53,7 @@ from services.magento import (
     MAGENTO_ACCESS_TOKEN_SECRET,
     MAGENTO_VERIFY_SSL,
 )
+from services.nexo import nexo_client
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -82,6 +86,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: str
+    is_admin: bool
 
     class Config:
         from_attributes = True
@@ -95,6 +100,42 @@ class Token(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class UserInviteRequest(BaseModel):
+    username: str
+    email: EmailStr
+    is_admin: bool = False
+
+
+class SetPasswordRequest(BaseModel):
+    password: str
+
+
+class AdminUserResponse(BaseModel):
+    id: int
+    username: str
+    email: str
+    is_admin: bool
+    password_setup_completed: bool
+    invitation_expires_at: Optional[datetime] = None
+    invited_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UserInvitationResponse(BaseModel):
+    user: AdminUserResponse
+    invite_link: str
+    expires_at: datetime
+
+
+class InvitationInfoResponse(BaseModel):
+    username: str
+    email: EmailStr
+    expires_at: datetime
 
 
 class PrestashopSettingsDTO(BaseModel):
@@ -179,6 +220,157 @@ class IntegrationSettingsUpdateDTO(BaseModel):
     baselinker: Optional[BaselinkerSettingsUpdateDTO] = None
     shopify: Optional[ShopifySettingsUpdateDTO] = None
     magento: Optional[MagentoSettingsUpdateDTO] = None
+
+
+class OrderStatusUpdateDTO(BaseModel):
+    status: str
+
+
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3300")
+INVITATION_EXPIRE_HOURS = 72
+USER_SCHEMA_READY = False
+
+
+def ensure_user_schema(db: Session) -> None:
+    global USER_SCHEMA_READY
+
+    if USER_SCHEMA_READY:
+        return
+
+    inspector = inspect(engine)
+    try:
+        columns = {col["name"] for col in inspector.get_columns("users")}
+    except Exception:
+        return
+
+    statements: list[str] = []
+
+    if "is_admin" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE")
+    if "invitation_token" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN invitation_token VARCHAR(255)")
+    if "invitation_expires_at" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN invitation_expires_at TIMESTAMP WITH TIME ZONE")
+    if "invited_at" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN invited_at TIMESTAMP WITH TIME ZONE")
+    if "password_setup_completed" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN password_setup_completed BOOLEAN NOT NULL DEFAULT TRUE")
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+        connection.execute(text("ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL"))
+        connection.execute(
+            text(
+                """
+                UPDATE users
+                SET password_setup_completed = CASE
+                    WHEN hashed_password IS NULL OR TRIM(hashed_password) = '' THEN FALSE
+                    ELSE TRUE
+                END
+                """
+            )
+        )
+
+        index_statements = [
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_invitation_token ON users (invitation_token)",
+            "CREATE INDEX IF NOT EXISTS ix_users_is_admin ON users (is_admin)",
+        ]
+        for statement in index_statements:
+            connection.execute(text(statement))
+
+    db.expire_all()
+    USER_SCHEMA_READY = True
+
+
+def ensure_admin_user_seed(db: Session) -> None:
+    ensure_user_schema(db)
+
+    admin_exists = db.query(User).filter(User.is_admin.is_(True)).first()
+    if admin_exists:
+        return
+
+    oldest_user = db.query(User).order_by(User.id.asc()).first()
+    if oldest_user:
+        oldest_user.is_admin = True
+        db.commit()
+        return
+
+    admin_username = os.getenv("ADMIN_USERNAME", "admin")
+    admin_email = os.getenv("ADMIN_EMAIL", "admin@example.com")
+    admin_password = os.getenv("ADMIN_PASSWORD", "admin123456")
+
+    db.add(
+        User(
+            username=admin_username,
+            email=admin_email,
+            hashed_password=get_password_hash(admin_password),
+            is_admin=True,
+            password_setup_completed=True,
+        )
+    )
+    db.commit()
+
+
+def build_invite_link(token: str) -> str:
+    return f"{FRONTEND_BASE_URL.rstrip('/')}/set-password?token={token}"
+
+
+def create_user_invitation(
+    db: Session,
+    username: str,
+    email: str,
+    is_admin: bool = False,
+) -> tuple[User, str, datetime]:
+    username = username.strip()
+    email = email.strip().lower()
+
+    existing_username = db.query(User).filter(User.username == username).first()
+    if existing_username and existing_username.email.lower() != email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
+
+    existing_email = db.query(User).filter(User.email == email).first()
+    if existing_email and existing_email.username != username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    user = existing_username or existing_email
+    if user and bool(getattr(user, "password_setup_completed", False)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User already exists and has an active account",
+        )
+
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=INVITATION_EXPIRE_HOURS)
+    token = secrets.token_urlsafe(32)
+
+    if user:
+        user.username = username
+        user.email = email
+        user.is_admin = is_admin
+        user.hashed_password = None
+        user.password_setup_completed = False
+        user.invited_at = now
+        user.invitation_token = token
+        user.invitation_expires_at = expires_at
+    else:
+        user = User(
+            username=username,
+            email=email,
+            hashed_password=None,
+            is_admin=is_admin,
+            password_setup_completed=False,
+            invited_at=now,
+            invitation_token=token,
+            invitation_expires_at=expires_at,
+        )
+        db.add(user)
+
+    db.commit()
+    db.refresh(user)
+
+    return user, token, expires_at
 
 
 def ensure_integration_settings_schema() -> None:
@@ -301,6 +493,26 @@ def get_integration_settings_map(db: Session) -> dict:
     return {row.provider: row for row in rows}
 
 
+def attach_local_statuses(db: Session, orders: list[dict]) -> list[dict]:
+    if not orders:
+        return orders
+
+    order_ids = [str(order.get("id")) for order in orders if order.get("id")]
+    if not order_ids:
+        return orders
+
+    stored_statuses = db.query(OrderStatus).filter(OrderStatus.order_id.in_(order_ids)).all()
+    status_by_order_id = {row.order_id: row.status for row in stored_statuses}
+
+    return [
+        {
+            **order,
+            "status": status_by_order_id.get(str(order.get("id")), ""),
+        }
+        for order in orders
+    ]
+
+
 def apply_runtime_integration_settings(db: Session) -> None:
     settings = get_integration_settings_map(db)
 
@@ -389,6 +601,8 @@ def build_settings_response(db: Session) -> IntegrationSettingsResponseDTO:
 def startup_seed_settings():
     db = SessionLocal()
     try:
+        ensure_user_schema(db)
+        ensure_admin_user_seed(db)
         ensure_integration_settings_schema()
         ensure_integration_settings_seed(db)
     finally:
@@ -412,6 +626,9 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     """
     Register a new user.
     """
+    ensure_user_schema(db)
+    ensure_admin_user_seed(db)
+
     # Check if username already exists
     existing_user = db.query(User).filter(User.username == user_data.username).first()
     if existing_user:
@@ -434,6 +651,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         username=user_data.username,
         email=user_data.email,
         hashed_password=hashed_password,
+        password_setup_completed=True,
     )
 
     db.add(new_user)
@@ -448,10 +666,26 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
     """
     Login endpoint - returns JWT token.
     """
+    ensure_user_schema(db)
+
     # Find user by username
     user = db.query(User).filter(User.username == login_data.username).first()
 
-    if not user or not verify_password(login_data.password, user.hashed_password):
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.password_setup_completed or not (user.hashed_password or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Use the invitation link to create your password first",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -475,6 +709,85 @@ def read_users_me(current_user: User = Depends(get_current_user)):
     Protected endpoint - requires valid JWT token.
     """
     return current_user
+
+
+@app.get("/api/admin/users", response_model=list[AdminUserResponse])
+def get_admin_users(current_user: User = Depends(get_current_admin_user), db: Session = Depends(get_db)):
+    """
+    Get users list for the admin panel.
+    """
+    _ = current_user
+    ensure_user_schema(db)
+
+    return db.query(User).order_by(User.created_at.desc(), User.id.desc()).all()
+
+
+@app.post("/api/admin/users/invite", response_model=UserInvitationResponse, status_code=status.HTTP_201_CREATED)
+def invite_user(
+    payload: UserInviteRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Create an invited user and return the password-setup link.
+    """
+    _ = current_user
+    ensure_user_schema(db)
+
+    user, token, expires_at = create_user_invitation(
+        db=db,
+        username=payload.username,
+        email=payload.email,
+        is_admin=payload.is_admin,
+    )
+
+    return {
+        "user": user,
+        "invite_link": build_invite_link(token),
+        "expires_at": expires_at,
+    }
+
+
+@app.get("/api/invitations/{token}", response_model=InvitationInfoResponse)
+def get_invitation_info(token: str, db: Session = Depends(get_db)):
+    """
+    Validate invitation token and return basic user information.
+    """
+    ensure_user_schema(db)
+    user = db.query(User).filter(User.invitation_token == token).first()
+
+    if not user or not user.invitation_expires_at or user.invitation_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation link is invalid or expired")
+
+    return {
+        "username": user.username,
+        "email": user.email,
+        "expires_at": user.invitation_expires_at,
+    }
+
+
+@app.post("/api/invitations/{token}/set-password")
+def set_password_from_invitation(token: str, payload: SetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Set initial password using an invitation link.
+    """
+    ensure_user_schema(db)
+
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 6 characters long")
+
+    user = db.query(User).filter(User.invitation_token == token).first()
+    if not user or not user.invitation_expires_at or user.invitation_expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation link is invalid or expired")
+
+    user.hashed_password = get_password_hash(payload.password)
+    user.password_setup_completed = True
+    user.invitation_token = None
+    user.invitation_expires_at = None
+
+    db.commit()
+
+    return {"message": "Password created successfully"}
 
 
 @app.get("/api/integrations/settings", response_model=IntegrationSettingsResponseDTO)
@@ -568,7 +881,7 @@ async def get_all_orders(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Fetch the latest orders from Prestashop, Baselinker, WooCommerce, Shopify, and Magento API.
+    Fetch the latest orders from Prestashop, Baselinker, WooCommerce, Shopify, Magento, and Nexo API.
     Protected endpoint - requires valid JWT token.
     """
     _ = current_user
@@ -604,10 +917,48 @@ async def get_all_orders(
         print(f"Magento fetch error: {e}")
         magento_orders = []
 
+    try:
+        nexo_orders = await nexo_client.get_latest_orders(limit=limit)
+    except Exception as e:
+        print(f"Nexo fetch error: {e}")
+        nexo_orders = []
+
     # Dla potrzeb POC (Proof of Concept) nie sortujemy ogólnie po dacie,
     # tylko zawsze dodajemy listę z Baselinkera bezpośrednio pod listą z PrestaShop.
-    all_orders = woo_orders + shopify_orders + magento_orders + presta_orders[:1] + bl_orders[:limit]
-    return all_orders
+    all_orders = woo_orders + shopify_orders + magento_orders + nexo_orders + presta_orders[:1] + bl_orders[:limit]
+    return attach_local_statuses(db, all_orders)
+
+
+@app.put("/api/orders/{order_id}/status")
+def update_order_status(
+    order_id: str,
+    payload: OrderStatusUpdateDTO,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Save a local order status in the application database.
+    Protected endpoint - requires valid JWT token.
+    """
+    _ = current_user
+
+    normalized_status = payload.status.strip()
+    existing = db.query(OrderStatus).filter(OrderStatus.order_id == order_id).first()
+
+    if existing:
+        existing.status = normalized_status
+        row = existing
+    else:
+        row = OrderStatus(order_id=order_id, status=normalized_status)
+        db.add(row)
+
+    db.commit()
+    db.refresh(row)
+
+    return {
+        "order_id": row.order_id,
+        "status": row.status,
+    }
 
 
 @app.get("/api/orders/{order_id}/details")
@@ -631,6 +982,8 @@ async def get_all_order_details(
         return await shopify_client.get_order_details(order_id)
     if str(order_id).startswith("MG-"):
         return await magento_client.get_order_details(order_id)
+    if str(order_id).startswith("NX-"):
+        return await nexo_client.get_order_details(order_id)
 
     real_id = str(order_id).replace("PS-", "")
     return await prestashop_client.get_order_details(int(real_id))

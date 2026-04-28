@@ -26,6 +26,9 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/advox_oms_db
       SECRET_KEY: your-secret-key-change-in-production-please
+      NEXO_API_BASE_URL: "http://host.docker.internal:5085"
+      NEXO_OPERATOR_LOGIN: "Szef firmy"
+      NEXO_OPERATOR_PASSWORD: "robocze"
       WOOCOMMERCE_URL: "https://host.docker.internal:8888/wp-json/wc/v3"
       WOOCOMMERCE_CONSUMER_KEY: "ck_8b51b5cd1a0a3b96f752a4b0cba276b37b6025ee"
       WOOCOMMERCE_CONSUMER_SECRET: "cs_5ad0b8fdedfc37cc75eb839c0b68b561cd675943"
