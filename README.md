@@ -60,7 +60,7 @@ Pierwsze uruchomienie może potrwać kilka minut (pobieranie obrazów, instalacj
 - **Frontend**: http://localhost:3300/advox-oms/
 - **Backend API**: http://localhost:8001
 - **API Documentation (Swagger)**: http://localhost:8001/docs
-- **PostgreSQL**: localhost:5432
+- **PostgreSQL**: dostępne wewnątrz sieci Dockera jako `db:5432`
 
 ## 🗂️ Struktura Projektu
 
