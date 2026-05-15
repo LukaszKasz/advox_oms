@@ -52,8 +52,6 @@ services:
       MAGENTO_VERIFY_SSL: ${MAGENTO_VERIFY_SSL:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    ports:
-      - "8001:8000"
     depends_on:
       db:
         condition: service_healthy
