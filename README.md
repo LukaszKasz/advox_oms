@@ -50,14 +50,14 @@ cd /home/lkasztelan/projekty/advox_oms
 ### 2. Uruchomienie aplikacji
 
 ```bash
-docker-compose up --build
+docker compose up --build
 ```
 
 Pierwsze uruchomienie może potrwać kilka minut (pobieranie obrazów, instalacja zależności).
 
 ### 3. Dostęp do aplikacji
 
-- **Frontend**: http://localhost:3300
+- **Frontend**: http://localhost:3300/advox-oms/
 - **Backend API**: http://localhost:8001
 - **API Documentation (Swagger)**: http://localhost:8001/docs
 - **PostgreSQL**: localhost:5432
@@ -118,13 +118,13 @@ Domyślne wartości:
 ## 🛑 Zatrzymanie aplikacji
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 Aby usunąć również wolumeny (baza danych):
 
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
 ## 📊 API Endpoints
@@ -154,7 +154,7 @@ docker-compose down -v
 Usunięcie wszystkich kontenerów, obrazów i wolumenów:
 
 ```bash
-docker-compose down -v --rmi all
+docker compose down -v --rmi all
 ```
 
 ## 📚 Dalszy rozwój
