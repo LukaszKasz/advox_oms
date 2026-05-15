@@ -70,8 +70,6 @@ services:
     restart: unless-stopped
     environment:
       APP_BASE_PATH: ${APP_BASE_PATH:-/advox-oms}
-    ports:
-      - "3300:80"
     depends_on:
       - backend
     networks:

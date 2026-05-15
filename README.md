@@ -57,7 +57,7 @@ Pierwsze uruchomienie może potrwać kilka minut (pobieranie obrazów, instalacj
 
 ### 3. Dostęp do aplikacji
 
-- **Frontend**: http://localhost:3300/advox-oms/
+- **Frontend**: przez skonfigurowany reverse proxy pod ścieżką `/advox-oms`
 - **Backend API**: dostępne przez frontend/reverse proxy
 - **API Documentation (Swagger)**: dostępne z kontenera backend lub przez wewnętrzny routing
 - **PostgreSQL**: dostępne wewnątrz sieci Dockera jako `db:5432`
