@@ -8,6 +8,7 @@ import SettingsPage from './components/SettingsPage';
 import UsersPage from './components/UsersPage';
 import SetPasswordForm from './components/SetPasswordForm';
 import { tokenManager } from './api';
+import { APP_BASE_PATH } from './config';
 
 function ProtectedRoute({ children }) {
     return tokenManager.isAuthenticated() ? children : <Navigate to="/login" />;
@@ -15,7 +16,7 @@ function ProtectedRoute({ children }) {
 
 function App() {
     return (
-        <Router>
+        <Router basename={APP_BASE_PATH || undefined}>
             <Routes>
                 <Route path="/" element={<Navigate to="/login" />} />
                 <Route path="/login" element={<LoginForm />} />

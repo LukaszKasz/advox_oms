@@ -55,6 +55,18 @@ from services.magento import (
 )
 from services.nexo import nexo_client
 
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:3300,http://localhost:5173,https://sprzedaz.advox.pl",
+    ).split(",")
+    if origin.strip()
+]
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3300/advox-oms")
+INVITATION_EXPIRE_HOURS = 72
+USER_SCHEMA_READY = False
+
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
@@ -68,7 +80,7 @@ app = FastAPI(
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3300", "http://localhost:5173"],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -224,12 +236,6 @@ class IntegrationSettingsUpdateDTO(BaseModel):
 
 class OrderStatusUpdateDTO(BaseModel):
     status: str
-
-
-FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3300")
-INVITATION_EXPIRE_HOURS = 72
-USER_SCHEMA_READY = False
-
 
 def ensure_user_schema(db: Session) -> None:
     global USER_SCHEMA_READY

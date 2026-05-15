@@ -3,6 +3,9 @@ FROM node:18-alpine as build
 
 WORKDIR /app
 
+ARG VITE_APP_BASE_PATH=/
+ENV VITE_APP_BASE_PATH=${VITE_APP_BASE_PATH}
+
 # Copy package files
 COPY package*.json ./
 
@@ -21,8 +24,10 @@ FROM nginx:alpine
 # Copy built assets from build stage
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+ENV APP_BASE_PATH=/advox-oms
+
+# Copy nginx configuration template
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 
 # Expose port
 EXPOSE 80

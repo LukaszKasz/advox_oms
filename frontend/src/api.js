@@ -1,6 +1,7 @@
 import axios from 'axios';
+import { withBasePath } from './config';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/backend';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || withBasePath('/api/backend');
 const NEXO_API_BASE_URL = import.meta.env.VITE_NEXO_API_BASE_URL || 'http://localhost:5085';
 
 // Create axios instance with default config
@@ -40,7 +41,7 @@ api.interceptors.response.use(
     (error) => {
         if (error.response && error.response.status === 401) {
             tokenManager.removeToken();
-            window.location.href = '/login';
+            window.location.href = withBasePath('/login');
         }
         return Promise.reject(error);
     }
